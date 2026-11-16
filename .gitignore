@@ -5,3 +5,5 @@ app/__pycache__/main.cpython-312.pyc
 app/api/__pycache__/chat.cpython-312.pyc
 tests/test_openrouter.py
 app/schemas/__pycache__/chat.cpython-312.pyc
+logging_details/
+__pycache__/
