@@ -4,31 +4,53 @@ from fastapi.responses import StreamingResponse
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.llm_service import chat_completions
 from app.logger import logger
+from app.services.router import select_model
 
 router = APIRouter()
 
+async def chat(model: str | None, message: str, routing_strategy: str = "auto"):
+    reason = "manual routing"
+    if routing_strategy == "auto":
+        model_info = select_model(message)
+        model = model_info["model"]
+        reason = model_info["reason"]
 
-async def chat(model: str, message: str):
     request = ChatRequest(
         model=model,
         messages=[{"role": "user", "content": message}],
+        routing_strategy=routing_strategy,
+        reason=reason if routing_strategy == "auto" else "manual"
     )
     result = await chat_completions(request)
-
-    if isinstance(result, str):
-        return result
-    if isinstance(result, dict):
-        return result["choices"][0]["message"]["content"]
-    return result.choices[0].message.content
+    fallback_used = result.get("_fallback_used", False) if isinstance(result, dict) else False
+    attempted_model = result.get("_attempted_model", request.model) if isinstance(result, dict) else request.model
+    return result, request.model, reason, request.routing_strategy, fallback_used, attempted_model
 
 
 @router.post("/v1/chat")
 async def chat_endpoint(request: ChatRequest):
     request_id = str(uuid.uuid4())
     if request.message is not None:
-        result = await chat(request.model, request.message)
+        if request.routing_strategy == "manual":
+            chat_result = await chat(request.model, request.message, "manual")
+        else:
+            chat_result = await chat(request.model, request.message)
+        if isinstance(chat_result, tuple):
+            result, model, reason, routing_strategy, fallback_used, attempted_model = chat_result
+        else:
+            result = chat_result
+            model = request.model
+            reason = "manual"
+            routing_strategy = request.routing_strategy
+            fallback_used = False
+            attempted_model = request.model
     else:
         result = await chat_completions(request)
+        fallback_used = result.get("_fallback_used", False) if isinstance(result, dict) else False
+        attempted_model = result.get("_attempted_model", request.model) if isinstance(result, dict) else request.model
+        model = attempted_model or request.model
+        reason = request.reason
+        routing_strategy = request.routing_strategy
 
     # If streaming, chat_completions returned a StreamingResponse directly
     if isinstance(result, StreamingResponse):
@@ -58,6 +80,9 @@ async def chat_endpoint(request: ChatRequest):
 
     return ChatResponse(
         request_id=request_id,
-        model=request.model,
+        model=attempted_model or model,
         response=assistant_text,
+        routing_strategy=routing_strategy,
+        routing_reason = reason,
+        fallback_used=fallback_used,
     )

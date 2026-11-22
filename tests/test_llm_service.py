@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock
+from app.services.fallback import complete_with_fallback
 
 from app.services import llm_service
 
@@ -42,3 +43,26 @@ async def test_generate_response(monkeypatch):
 
     assert result == "Hello from the mock model"
     mock_acompletion.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_completion_uses_fallback_after_primary_failure():
+    completion = AsyncMock(
+        side_effect=[
+            ConnectionError("primary unavailable"),
+            {"choices": [{"message": {"content": "fallback response"}}]},
+        ]
+    )
+
+    result = await complete_with_fallback(
+        completion,
+        model="ollama_chat/qwen2.5:1.5b",
+        fallback_model="openrouter/test-model",
+        messages=[{"role": "user", "content": "Hello"}],
+        stream=False,
+    )
+
+    assert result.fallback_used is True
+    assert result.attempted_model == "openrouter/test-model"
+    assert result.response["choices"][0]["message"]["content"] == "fallback response"
+    assert completion.await_count == 2

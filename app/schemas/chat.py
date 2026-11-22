@@ -1,6 +1,7 @@
 from typing import Literal
 from pydantic import BaseModel, Field
 from pydantic import model_validator
+from typing import Optional
 
 
 class ChatMessage(BaseModel):
@@ -9,10 +10,12 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    model: str
+    model: Optional[str] = None
     messages: list[ChatMessage] = Field(default_factory=list)
     message: str | None = None
     stream: bool = False
+    routing_strategy: Literal["auto", "manual"] = "auto"
+    reason: Optional[str] = None
 
     @model_validator(mode="after")
     def require_message(self):
@@ -25,3 +28,6 @@ class ChatResponse(BaseModel):
     request_id: str
     model: str
     response: str
+    routing_strategy: Literal["auto", "manual"]
+    routing_reason: Optional[str] = None
+    fallback_used: bool

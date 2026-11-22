@@ -11,6 +11,11 @@ class Settings(BaseSettings):
         "local-small": "ollama_chat/qwen2.5:1.5b",
         "openrouter": "openrouter/nvidia/nemotron-3.5-super-vl:free",
     }
+    fallback_registry: dict[str, str] = {
+        "ollama_chat/qwen2.5:1.5b": "openrouter/thinkingmachines/inkling-small",
+        "openrouter/thinkingmachines/inkling-small": "ollama_chat/qwen2.5:1.5b",
+        "openrouter/nvidia/nemotron-3.5-super-vl:free": "openrouter/thinkingmachines/inkling-small",
+    }
 
     model_config = SettingsConfigDict(
         env_file=".env",
