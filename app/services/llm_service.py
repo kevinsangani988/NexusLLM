@@ -52,9 +52,27 @@ async def stream_response(model: str, messages: list[dict]):
     
 
 @router.post("/chat/completions")
-async def chat_completions(payload: ChatRequest):
+async def chat_completions(
+    payload: ChatRequest | None = None,
+    *,
+    model: str | None = None,
+    message: str | None = None,
+):
+    if payload is None:
+        if model is None or message is None:
+            raise HTTPException(
+                status_code=422,
+                detail="model and message are required",
+            )
+        payload = ChatRequest(
+            model=model,
+            messages=[{"role": "user", "content": message}],
+        )
+
     resolved_model = settings.model_registry.get(payload.model, payload.model)
     formatted_messages = [m.model_dump() for m in payload.messages]
+    if payload.message is not None and not formatted_messages:
+        formatted_messages = [{"role": "user", "content": payload.message}]
 
     if payload.stream:
         return StreamingResponse(
@@ -74,4 +92,10 @@ async def chat_completions(payload: ChatRequest):
 
     duration_ms = (perf_counter() - start_time) * 1000
     logger.info(f"Sync Metrics | Model: {resolved_model} | Total: {duration_ms:.2f}ms")
-    return response.model_dump()
+    if hasattr(response, "model_dump"):
+        return response.model_dump()
+    if isinstance(response, dict):
+        return response
+    if hasattr(response, "choices"):
+        return response.choices[0].message.content
+    return response

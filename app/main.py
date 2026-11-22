@@ -18,3 +18,7 @@ async def log_latency(request: Request, call_next):
 @app.get("/")
 def health_check():
     return {"status": "ok"}
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
