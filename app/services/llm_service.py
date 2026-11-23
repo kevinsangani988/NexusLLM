@@ -1,11 +1,14 @@
 import json
 from time import perf_counter
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from litellm import acompletion
 from app.logger import logger
 from app.core.config import settings
+from redis.asyncio import Redis
+from app.core.redis import get_redis
 from app.schemas.chat import ChatRequest
+from app.services.cache import build_cache_key
 from app.services.fallback import complete_with_fallback
 
 router = APIRouter()
@@ -59,25 +62,24 @@ async def stream_response(model: str, messages: list[dict]):
 @router.post("/chat/completions")
 async def chat_completions(
     payload: ChatRequest | None = None,
-    *,
-    model: str | None = None,
-    message: str | None = None,
+    redis: Redis = Depends(get_redis)
 ):
     if payload is None:
-        if model is None or message is None:
+        if payload is None:
             raise HTTPException(
                 status_code=422,
                 detail="model and message are required",
             )
-        payload = ChatRequest(
-            model=model,
-            messages=[{"role": "user", "content": message}],
-        )
+        return {"error": "model and message are required"}
 
     resolved_model = settings.model_registry.get(payload.model, payload.model)
     formatted_messages = [m.model_dump() for m in payload.messages]
     if payload.message is not None and not formatted_messages:
         formatted_messages = [{"role": "user", "content": payload.message}]
+
+    use_cache = payload.temperature <= 0.2
+    cache_key = build_cache_key(payload.message, resolved_model, payload.temperature) 
+    
 
     if payload.stream:
         return StreamingResponse(
@@ -93,6 +95,7 @@ async def chat_completions(
             model=resolved_model,
             fallback_model=fallback_model,
             messages=formatted_messages,
+            temperature=payload.temperature,
             stream=False,
         )
         response = result.response

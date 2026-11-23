@@ -3,10 +3,11 @@ import hashlib
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-async def build_cache_key(message: str, model: str ) -> str:
+async def build_cache_key(message: str, model: str, temperature: float ) -> str:
     payload = {
         "message": message,
-        "model": model
+        "model": model,
+        "temperature": temperature
     }
     payload_str = json.dumps(payload, sort_keys=True)
     payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
