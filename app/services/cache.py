@@ -3,6 +3,8 @@ import hashlib
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+CACHE_TTL_SECONDS = 3600
+
 async def build_cache_key(message: str, model: str, temperature: float ) -> str:
     payload = {
         "message": message,
@@ -13,7 +15,7 @@ async def build_cache_key(message: str, model: str, temperature: float ) -> str:
     payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
     return f"nexus:chat_cache:{payload_hash}"
 
-async def cache_response(redis: Redis, key: str, response: str, expiration_seconds: int = 3600) -> None:
+async def cache_response(redis: Redis, key: str, response: str, expiration_seconds: int = CACHE_TTL_SECONDS) -> None:
     try:
         await redis.set(key, response, ex=expiration_seconds)
     except RedisError as e:

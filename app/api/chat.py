@@ -9,6 +9,11 @@ from app.services.router import select_model
 from app.core.redis import get_redis
 from redis.asyncio import Redis
 from app.services.cache import build_cache_key, cache_response, get_cached_response
+from app.services.rate_limit import (
+    check_rpm_limit,
+    check_tpm_limit,
+    record_tpm_usage,
+)
 
 router = APIRouter()
 
@@ -19,7 +24,8 @@ async def chat(
     temperature: float = 0.7,
     stream: bool = False,
     use_cache: bool = False,
-    redis: Redis | None = None,
+    x_api_key: str = "kevin",
+    redis: Redis = Depends(get_redis),
 ):
     reason = "manual"
     if routing_strategy == "auto":
@@ -44,6 +50,7 @@ async def chat(
         request,
         redis=redis,
         cache_key=cache_key,
+        x_api_key="kevin",
     )
 
     if not stream and isinstance(result, dict) and use_cache and redis is not None:

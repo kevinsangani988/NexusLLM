@@ -1,6 +1,8 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
+from redis.asyncio import Redis
+from app.services.rate_limit import record_tpm_usage
 
 
 @dataclass
@@ -18,14 +20,22 @@ async def complete_with_fallback(
     messages: list[dict],
     stream: bool,
     temperature: float = 0.7,
+    redis: Redis | None = None,
+    x_api_key: str = "kevin",
+    stream_options: dict | None = None,
 ) -> CompletionResult:
     try:
         response = await completion(
             model=model,
             messages=messages,
             stream=stream,
+            stream_options=stream_options,
             temperature=temperature,
         )
+        usage = getattr(response, "usage", None)
+        total_tokens = getattr(usage, "total_tokens", 0) or 0
+        if redis is not None:
+            await record_tpm_usage(redis, x_api_key, total_tokens)
         return CompletionResult(
             response=response,
             fallback_used=False,
@@ -41,6 +51,7 @@ async def complete_with_fallback(
             messages=messages,
             stream=stream,
             temperature=temperature,
+            stream_options=stream_options,
         )
         return CompletionResult(
             response=response,

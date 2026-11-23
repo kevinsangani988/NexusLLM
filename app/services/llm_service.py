@@ -10,6 +10,7 @@ from app.core.redis import get_redis
 from app.schemas.chat import ChatRequest
 from app.services.cache import cache_response
 from app.services.fallback import complete_with_fallback
+from app.services.rate_limit import check_rpm_limit, check_tpm_limit, record_tpm_usage
 
 router = APIRouter()
 
@@ -20,12 +21,14 @@ async def stream_response(
     temperature: float = 0.7,
     redis: Redis | None = None,
     cache_key: str | None = None,
+    x_api_key: str = "kevin"
 ):
     time_to_first_token = None
     start_time = perf_counter()
     token_latency = []
     token_count = 0
     last_token_time = start_time
+
 
     fallback_model = settings.fallback_registry.get(model)
     result = await complete_with_fallback(
@@ -35,13 +38,26 @@ async def stream_response(
         messages=messages,
         stream=True,
         temperature=temperature,
+        stream_options={"include_usage": True},
+        redis=redis,
+        x_api_key=x_api_key,
     )
     response = result.response
     chunks: list[str] = []
 
     async for chunk in response:
-        delta = chunk.choices[0].delta
-        content = getattr(delta, "content", "")
+        chunk_usage = getattr(chunk, "usage", None)
+        if chunk_usage and getattr(chunk_usage, "total_tokens", None):
+            total_tokens = chunk_usage.total_tokens
+            if redis is not None:
+                await record_tpm_usage(redis, x_api_key, total_tokens)
+
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+
+        delta = getattr(choices[0], "delta", None)
+        content = getattr(delta, "content", None) if delta is not None else None
 
         if content:
             chunks.append(content)
@@ -78,6 +94,7 @@ async def _chat_completions(
     message: str | None = None,
     redis: Redis | None = None,
     cache_key: str | None = None,
+    x_api_key: str = "kevin" ,
 ):
     if payload is None:
         if model is None or message is None:
@@ -94,6 +111,10 @@ async def _chat_completions(
     formatted_messages = [m.model_dump() for m in payload.messages]
     if payload.message is not None and not formatted_messages:
         formatted_messages = [{"role": "user", "content": payload.message}]
+
+    if redis is not None:
+        await check_rpm_limit(redis, x_api_key, rpm_limit=30)
+        await check_tpm_limit(redis, x_api_key, tpm_limit=100_000)
 
     if payload.stream:
         return StreamingResponse(
@@ -117,6 +138,8 @@ async def _chat_completions(
             messages=formatted_messages,
             temperature=payload.temperature,
             stream=False,
+            redis=redis,
+            x_api_key=x_api_key,
         )
         response = result.response
         fallback_used = result.fallback_used
@@ -146,6 +169,7 @@ async def chat_completions(
     *,
     model: str | None = None,
     message: str | None = None,
+    api_key: str = "kevin",
 ):
     return await _chat_completions(
         payload,
