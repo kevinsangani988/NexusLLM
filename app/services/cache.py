@@ -23,7 +23,9 @@ async def get_cached_response(redis: Redis, key: str) -> str | None:
     try:
         cached_response = await redis.get(key)
         if cached_response:
-            return cached_response.decode("utf-8")
+            if isinstance(cached_response, bytes):
+                return cached_response.decode("utf-8")
+            return cached_response
 
     except RedisError as e:
         print(f"Redis error while getting cached response: {e}")

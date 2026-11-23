@@ -2,8 +2,9 @@ from fastapi import FastAPI, Request
 from app.api.chat import router as chat_router
 from time import time
 from app.logger import logger
+from app.core.redis import lifespan
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 app.include_router(chat_router)
 

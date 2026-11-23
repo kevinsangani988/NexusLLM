@@ -1,15 +1,27 @@
 import uuid
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+import json
 from app.schemas.chat import ChatRequest, ChatResponse
-from app.services.llm_service import chat_completions
+from app.services.llm_service import _chat_completions, chat_completions
 from app.logger import logger
 from app.services.router import select_model
+from app.core.redis import get_redis
+from redis.asyncio import Redis
+from app.services.cache import build_cache_key, cache_response, get_cached_response
 
 router = APIRouter()
 
-async def chat(model: str | None, message: str, routing_strategy: str = "auto"):
-    reason = "manual routing"
+async def chat(
+    model: str | None,
+    message: str,
+    routing_strategy: str = "auto",
+    temperature: float = 0.7,
+    stream: bool = False,
+    use_cache: bool = False,
+    redis: Redis | None = None,
+):
+    reason = "manual"
     if routing_strategy == "auto":
         model_info = select_model(message)
         model = model_info["model"]
@@ -19,31 +31,80 @@ async def chat(model: str | None, message: str, routing_strategy: str = "auto"):
         model=model,
         messages=[{"role": "user", "content": message}],
         routing_strategy=routing_strategy,
-        reason=reason if routing_strategy == "auto" else "manual"
+        reason=reason if routing_strategy == "auto" else "manual",
+        temperature=temperature,
+        stream=stream,
     )
-    result = await chat_completions(request)
+
+    cache_key = None
+    if stream and use_cache and redis is not None:
+        cache_key = await build_cache_key(message, request.model or "", temperature)
+
+    result = await _chat_completions(
+        request,
+        redis=redis,
+        cache_key=cache_key,
+    )
+
+    if not stream and isinstance(result, dict) and use_cache and redis is not None:
+        choices = result.get("choices", [])
+        if choices:
+            answer = choices[0].get("message", {}).get("content", "")
+            cache_key = await build_cache_key(message, request.model or "", temperature)
+            await cache_response(redis, cache_key, answer)
+            
     fallback_used = result.get("_fallback_used", False) if isinstance(result, dict) else False
     attempted_model = result.get("_attempted_model", request.model) if isinstance(result, dict) else request.model
     return result, request.model, reason, request.routing_strategy, fallback_used, attempted_model
 
 
 @router.post("/v1/chat")
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(request: ChatRequest, redis: Redis = Depends(get_redis)):
     request_id = str(uuid.uuid4())
+
+    temperature = request.temperature
+    use_cache = temperature <= 0.2
+
+    resolved_model = request.model
+    reason = request.reason
+    if not resolved_model:
+        model_info = select_model(request.message or "")
+        resolved_model = model_info["model"]
+        reason = model_info["reason"]
+
+    cache_key = await build_cache_key(request.message, resolved_model, temperature) if use_cache else None
+
+
+    if use_cache:
+        cached_response = await get_cached_response(redis, cache_key)
+        if cached_response:
+            logger.info(f"Cache hit for request_id: {request_id}, model: {resolved_model}")
+            if not request.stream:
+                return {
+                    "model": resolved_model,
+                    "choices": [{"message": {"role": "assistant", "content": cached_response}}],
+                    "cached": True,
+                }
+            async def cached_sse():
+                yield f"data: {json.dumps({'choices': [{'delta': {'content': cached_response}}]})}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(cached_sse(), media_type="text/event-stream")
+
+
     if request.message is not None:
         if request.routing_strategy == "manual":
-            chat_result = await chat(request.model, request.message, "manual")
+            chat_result = await chat(resolved_model, request.message, "manual", temperature=temperature, stream=request.stream, use_cache=use_cache, redis=redis)
         else:
-            chat_result = await chat(request.model, request.message)
+            chat_result = await chat(resolved_model, request.message, "auto", temperature=temperature, stream=request.stream, use_cache=use_cache, redis=redis)
         if isinstance(chat_result, tuple):
             result, model, reason, routing_strategy, fallback_used, attempted_model = chat_result
         else:
             result = chat_result
-            model = request.model
+            model = resolved_model
             reason = "manual"
             routing_strategy = request.routing_strategy
             fallback_used = False
-            attempted_model = request.model
+            attempted_model = resolved_model
     else:
         result = await chat_completions(request)
         fallback_used = result.get("_fallback_used", False) if isinstance(result, dict) else False
@@ -52,8 +113,8 @@ async def chat_endpoint(request: ChatRequest):
         reason = request.reason
         routing_strategy = request.routing_strategy
 
-    # If streaming, chat_completions returned a StreamingResponse directly
     if isinstance(result, StreamingResponse):
+        
         return result
 
     if isinstance(result, str):

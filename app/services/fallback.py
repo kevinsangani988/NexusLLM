@@ -17,12 +17,14 @@ async def complete_with_fallback(
     fallback_model: str | None,
     messages: list[dict],
     stream: bool,
+    temperature: float = 0.7,
 ) -> CompletionResult:
     try:
         response = await completion(
             model=model,
             messages=messages,
             stream=stream,
+            temperature=temperature,
         )
         return CompletionResult(
             response=response,
@@ -38,6 +40,7 @@ async def complete_with_fallback(
             model=fallback_model,
             messages=messages,
             stream=stream,
+            temperature=temperature,
         )
         return CompletionResult(
             response=response,

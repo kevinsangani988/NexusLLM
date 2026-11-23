@@ -16,7 +16,7 @@ class ChatRequest(BaseModel):
     stream: bool = False
     routing_strategy: Literal["auto", "manual"] = "auto"
     reason: Optional[str] = None
-    temperature: float
+    temperature: float = 0.7
 
     @model_validator(mode="after")
     def require_message(self):

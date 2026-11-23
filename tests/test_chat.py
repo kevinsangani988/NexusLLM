@@ -8,7 +8,7 @@ client = TestClient(app)
 @pytest.mark.asyncio
 async def test_chat_endpoint(monkeypatch):
 
-    async def mock_generate_response(model, message):
+    async def mock_generate_response(model, message, *args, **kwargs):
         return "A transformer uses self-attention."
 
     monkeypatch.setattr(
