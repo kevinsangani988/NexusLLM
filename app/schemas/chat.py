@@ -32,3 +32,4 @@ class ChatResponse(BaseModel):
     routing_strategy: Literal["auto", "manual"]
     routing_reason: Optional[str] = None
     fallback_used: bool
+    cache_type: Literal["exact", "semantic", "none"] = "none"

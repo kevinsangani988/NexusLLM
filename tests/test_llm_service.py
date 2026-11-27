@@ -4,6 +4,7 @@ from app.services.fallback import complete_with_fallback
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from app.services.cache import CACHE_TTL_SECONDS, cache_response
+from redis.asyncio import Redis
 
 from app.services import llm_service
 
@@ -100,17 +101,34 @@ async def test_stream_response_skips_usage_only_chunks(monkeypatch):
         "acompletion",
         mock_completion,
     )
+    mock_cache_response = AsyncMock()
+    mock_store_semantic_cache = AsyncMock()
+    mock_record_tpm_usage = AsyncMock()
+    monkeypatch.setattr(llm_service, "cache_response", mock_cache_response)
+    monkeypatch.setattr(llm_service, "store_semantic_cache", mock_store_semantic_cache)
+    monkeypatch.setattr(llm_service, "record_tpm_usage", mock_record_tpm_usage)
+    redis = Redis.from_url("redis://localhost")
 
     output = [
         item
         async for item in llm_service.stream_response(
             model="openrouter/test-model",
             messages=[{"role": "user", "content": "Hello"}],
+            redis=redis,
+            cache_key="cache-key",
+            cache_model="requested-model",
         )
     ]
 
     assert any("Hello" in item for item in output)
     assert output[-1] == "data: [DONE]\n\n"
+    mock_cache_response.assert_awaited_once_with(redis, "cache-key", "Hello")
+    mock_store_semantic_cache.assert_awaited_once_with(
+        "requested-model",
+        [{"role": "user", "content": "Hello"}],
+        "Hello",
+    )
+    await redis.aclose()
 
 
 @pytest.mark.asyncio

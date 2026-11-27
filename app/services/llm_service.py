@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 from app.core.redis import get_redis
 from app.schemas.chat import ChatRequest
 from app.services.cache import cache_response
+from app.services.semantic_cache import store_semantic_cache
 from app.services.fallback import complete_with_fallback
 from app.services.rate_limit import check_rpm_limit, check_tpm_limit, record_tpm_usage
 
@@ -21,6 +22,7 @@ async def stream_response(
     temperature: float = 0.7,
     redis: Redis | None = None,
     cache_key: str | None = None,
+    cache_model: str | None = None,
     x_api_key: str = "kevin"
 ):
     time_to_first_token = None
@@ -74,7 +76,9 @@ async def stream_response(
     yield "data: [DONE]\n\n"
 
     if redis is not None and cache_key is not None and chunks:
-        await cache_response(redis, cache_key, "".join(chunks))
+        full_response = "".join(chunks)
+        await cache_response(redis, cache_key, full_response)
+        await store_semantic_cache(cache_model or model, messages, full_response)
 
     total_duration_ms = (perf_counter() - start_time) * 1000
     avg_itl = sum(token_latency) / len(token_latency) if token_latency else 0.0
@@ -124,6 +128,7 @@ async def _chat_completions(
                 temperature=payload.temperature,
                 redis=redis,
                 cache_key=cache_key,
+                cache_model=payload.model or resolved_model,
             ),
             media_type="text/event-stream",
         )
